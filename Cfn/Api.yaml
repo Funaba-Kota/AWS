@@ -131,6 +131,7 @@ Resources:
         IntegrationHttpMethod: GET
         Type: AWS_PROXY
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations'
+        Credentials: !GetAtt ApiGatewayExecutionRole.Arn
 
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
