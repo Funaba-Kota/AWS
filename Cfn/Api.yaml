@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TEST API GATEWAY DEPLOY
+Resources:
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Description: Creating DynamoDB
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: RegTime
+          AttributeType: S
+      KeySchema:
+        - AttributeName: RegTime
+          KeyType: HASH
+      TableName: 'Test-Tbl'
+      BillingMode: PROVISIONED 
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  IAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 
+              - 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'TestInsDataRole'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'dynamodb:PutItem'
+                Resource: !GetAtt DynamoDBTable.Arn
+
+  ApiGatewayExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 
+                - 'apigateway.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'ApiGatewayInvokeLambda'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !GetAtt LambdaFunction.Arn
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Description: Creating Lambda For Insert Date to DB
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt IAMRole.Arn
+      FunctionName: TestInsData
+      Code:
+        ZipFile: |
+          import boto3
+          from datetime import datetime
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table('Test-Tbl')
+
+          def add_item_to_dynamodb(RegTime_value, other_attribute_value):
+              response = table.put_item(
+                  Item={
+                      'RegTime': RegTime_value,
+                      'other_attribute': other_attribute_value
+                  }
+              )
+              return response
+
+          def lambda_handler(event, context):
+              RegTime_value = datetime.utcnow().isoformat() + 'Z'
+              other_attribute_value = "TEST"
+              
+              response = add_item_to_dynamodb(RegTime_value, other_attribute_value)
+              
+              return {
+                  'statusCode': 200,
+                  'body': "TEST"
+              }
+
+      Runtime: 'python3.12'
+      Timeout: 30
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${testApi}/*/GET/test'
+    DependsOn:   
+      - LambdaFunction
+      - ApiDeployment
+
+  testApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: 'testEntry'
+
+  testResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt testApi.RootResourceId
+      PathPart: 'test'
+      RestApiId: !Ref testApi
+
+  GetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId: !Ref testResource
+      RestApiId: !Ref testApi
+      Integration:
+        IntegrationHttpMethod: GET
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations'
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref testApi
+      StageName: stage
+    DependsOn: 
+      - GetMethod
